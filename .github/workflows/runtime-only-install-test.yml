@@ -1,4 +1,4 @@
-name: Inspect dotnet-runtime only install (clean slate)
+name: Inspect dotnet-runtime only install
 
 on:
   workflow_dispatch:
@@ -61,6 +61,65 @@ jobs:
 
           echo
           echo "=== Runtimes (expect only 8.0.x dotnet + aspnetcore) ==="
+          dotnet --list-runtimes
+
+          echo
+          echo "=== dotnet --info ==="
+          dotnet --info || true
+
+  runtime-only-prepopulated-runner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Initial Machine State
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "BEFORE - ubuntu-latest, .NET preinstalled by runner image"
+          echo "=================================================="
+          DOTNET_EXE_REAL=$(realpath "$(command -v dotnet)")
+          echo "dotnet=$DOTNET_EXE_REAL"
+          sha256sum "$DOTNET_EXE_REAL"
+          ls "$(dirname "$DOTNET_EXE_REAL")/host/fxr"
+          dotnet --list-sdks
+          dotnet --list-runtimes
+
+      - name: Install runtime only (no dotnet-version)
+        id: install
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: |
+            8.0.x
+
+      - name: Inspect after runtime-only install
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "AFTER - dotnet-runtime: 8.0.x only, no SDK requested"
+          echo "=================================================="
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          echo "DOTNET_ROOT=$DOTNET_ROOT"
+
+          DOTNET_EXE="$DOTNET_ROOT/dotnet"
+
+          echo
+          echo "=== dotnet executable ==="
+          ls -lh "$DOTNET_EXE"
+
+          echo
+          echo "=== SHA256 ==="
+          sha256sum "$DOTNET_EXE"
+
+          echo
+          echo "=== host/fxr ==="
+          ls -la "$DOTNET_ROOT/host/fxr"
+
+          echo
+          echo "=== SDKs ==="
+          dotnet --list-sdks || true
+
+          echo
+          echo "=== Runtimes ==="
           dotnet --list-runtimes
 
           echo
