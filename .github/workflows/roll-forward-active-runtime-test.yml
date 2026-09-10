@@ -1,0 +1,62 @@
+name: Inspect active runtime at build vs run time (roll-forward)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  roll-forward-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup dotnet (SDK 10.0.x + extra runtime 8.0.x)
+        id: install
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-runtime: |
+            8.0.x
+
+      - name: Report installed SDK/runtimes
+        shell: bash
+        run: |
+          echo "=== SDKs ==="
+          dotnet --list-sdks
+          echo
+          echo "=== Runtimes ==="
+          dotnet --list-runtimes
+          echo
+          echo "=== dotnet --info (Host / default SDK) ==="
+          dotnet --info
+
+      - name: Create net8.0 console app
+        shell: bash
+        run: |
+          mkdir -p /tmp/rollforward-app && cd /tmp/rollforward-app
+          dotnet new console -f net8.0 -o . --force
+
+          cat > Program.cs <<'EOF'
+          using System;
+          using System.Runtime.InteropServices;
+
+          Console.WriteLine("=== Build/Run info ===");
+          Console.WriteLine($"TargetFramework requested: net8.0");
+          Console.WriteLine($"FrameworkDescription (actual runtime running this): {RuntimeInformation.FrameworkDescription}");
+          Console.WriteLine($"Environment.Version: {Environment.Version}");
+          EOF
+
+      - name: Build with default (highest) SDK
+        shell: bash
+        run: |
+          cd /tmp/rollforward-app
+          echo "=== dotnet build output ==="
+          dotnet build -v:normal | grep -E "dotnet build|Determining projects|-> " || true
+          echo
+          echo "=== runtimeconfig.json (records the TFM + rollForward policy, not the resolved runtime) ==="
+          cat bin/Debug/net8.0/rollforward-app.runtimeconfig.json
+
+      - name: Run and observe which runtime actually executes it
+        shell: bash
+        run: |
+          cd /tmp/rollforward-app
+          echo "=== dotnet run output ==="
+          dotnet bin/Debug/net8.0/rollforward-app.dll
