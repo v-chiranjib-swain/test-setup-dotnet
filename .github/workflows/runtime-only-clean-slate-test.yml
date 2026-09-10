@@ -1,0 +1,62 @@
+name: Inspect dotnet-runtime only install (clean slate)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  runtime-only-clean-slate:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+
+    steps:
+      - name: Initial Machine State
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "BEFORE - clean container, zero .NET"
+          echo "=================================================="
+          command -v dotnet || echo "dotnet not found on PATH (expected)"
+          ls /usr/share/dotnet 2>/dev/null || echo "/usr/share/dotnet not present (expected)"
+          ls /root/.dotnet 2>/dev/null || echo "/root/.dotnet not present (expected)"
+
+      - name: Install runtime only (no dotnet-version)
+        id: install
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: |
+            8.0.x
+
+      - name: Inspect after runtime-only install
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "AFTER - dotnet-runtime: 8.0.x only, no SDK requested"
+          echo "=================================================="
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          echo "DOTNET_ROOT=$DOTNET_ROOT"
+
+          DOTNET_EXE="$DOTNET_ROOT/dotnet"
+
+          echo
+          echo "=== dotnet executable ==="
+          ls -lh "$DOTNET_EXE"
+
+          echo
+          echo "=== SHA256 ==="
+          sha256sum "$DOTNET_EXE"
+
+          echo
+          echo "=== host/fxr ==="
+          ls -la "$DOTNET_ROOT/host/fxr"
+
+          echo
+          echo "=== SDKs (expect none) ==="
+          dotnet --list-sdks || true
+
+          echo
+          echo "=== Runtimes (expect only 8.0.x dotnet + aspnetcore) ==="
+          dotnet --list-runtimes
+
+          echo
+          echo "=== dotnet --info ==="
+          dotnet --info || true
