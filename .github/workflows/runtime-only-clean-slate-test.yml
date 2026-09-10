@@ -9,6 +9,12 @@ jobs:
     container: ubuntu:24.04
 
     steps:
+      - name: Install container prerequisites
+        shell: bash
+        run: |
+          apt-get update -y
+          apt-get install -y curl ca-certificates
+
       - name: Initial Machine State
         shell: bash
         run: |
