@@ -13,7 +13,7 @@ jobs:
         shell: bash
         run: |
           apt-get update -y
-          apt-get install -y curl ca-certificates
+          apt-get install -y curl ca-certificates libicu74
 
       - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass NOT set)
         id: install
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           apt-get update -y
-          apt-get install -y curl ca-certificates
+          apt-get install -y curl ca-certificates libicu74
 
       - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass= true)
         id: install
