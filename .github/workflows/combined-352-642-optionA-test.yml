@@ -1,0 +1,72 @@
+name: Inspect combined dotnet-runtime + skip-lts-prepass (Option A)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  default-behavior:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+
+    steps:
+      - name: Install container prerequisites
+        shell: bash
+        run: |
+          apt-get update -y
+          apt-get install -y curl ca-certificates
+
+      - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass NOT set)
+        id: install
+        uses: v-chiranjib-swain/setup-dotnet@combined-352-and-642-optionA
+        with:
+          dotnet-version: '9.0.x'
+          dotnet-runtime: |
+            8.0.x
+
+      - name: Inspect (default - Pass 1 still runs)
+        shell: bash
+        run: |
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          echo
+          echo "=== host/fxr ==="
+          ls "$DOTNET_ROOT/host/fxr"
+          echo
+          echo "=== Runtimes ==="
+          dotnet --list-runtimes
+          echo
+          echo "=== dotnet --info (Host) ==="
+          dotnet --info
+
+  skip-lts-prepass:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+
+    steps:
+      - name: Install container prerequisites
+        shell: bash
+        run: |
+          apt-get update -y
+          apt-get install -y curl ca-certificates
+
+      - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass: true)
+        id: install
+        uses: v-chiranjib-swain/setup-dotnet@combined-352-and-642-optionA
+        with:
+          dotnet-version: '9.0.x'
+          dotnet-runtime: |
+            8.0.x
+          skip-lts-prepass: true
+
+      - name: Inspect (Pass 1 skipped)
+        shell: bash
+        run: |
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          echo
+          echo "=== host/fxr ==="
+          ls "$DOTNET_ROOT/host/fxr"
+          echo
+          echo "=== Runtimes ==="
+          dotnet --list-runtimes
+          echo
+          echo "=== dotnet --info (Host) ==="
+          dotnet --info
