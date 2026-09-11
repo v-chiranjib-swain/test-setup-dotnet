@@ -48,7 +48,7 @@ jobs:
           apt-get update -y
           apt-get install -y curl ca-certificates
 
-      - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass: true)
+      - name: Setup dotnet (SDK 9.0.x + runtime 8.0.x, skip-lts-prepass= true)
         id: install
         uses: v-chiranjib-swain/setup-dotnet@combined-352-and-642-optionA
         with:
