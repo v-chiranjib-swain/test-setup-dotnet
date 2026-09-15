@@ -33,8 +33,9 @@ jobs:
           check-latest: false
       - name: Verify dotnet
         shell: pwsh
+        working-directory: setup-dotnet-src
         run: |
           if ('${{ steps.reuse.outputs.dotnet-version }}' -ne '9.0.100') {
             throw "Expected 9.0.100 to be reused, got '${{ steps.reuse.outputs.dotnet-version }}'."
           }
-          setup-dotnet-src/__tests__/verify-dotnet.ps1 -Patterns "^9\.0\.100$"
+          __tests__/verify-dotnet.ps1 -Patterns "^9\.0\.100$"
