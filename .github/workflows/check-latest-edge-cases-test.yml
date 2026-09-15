@@ -1,0 +1,290 @@
+name: check-latest edge cases live test
+
+on:
+  workflow_dispatch:
+
+env:
+  # Points every 'uses: setup-dotnet' step at the PR branch under review.
+  SETUP_DOTNET_REF: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+  # Unreachable proxy used to simulate an air-gapped runner.
+  BLOCKED_HTTPS_PROXY: http://127.0.0.1:1
+  BLOCKED_HTTP_PROXY: http://127.0.0.1:1
+
+jobs:
+  edge-cases-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout setup-dotnet fork branch
+        uses: actions/checkout@v4
+        with:
+          repository: v-chiranjib-swain/setup-dotnet
+          ref: feature/check-latest-local-sdk-reuse
+          path: setup-dotnet-src
+
+      # --- Scenario A: check-latest false reuses a locally installed SDK, offline ---
+      - name: 'A: prepare fixture (8.0.900 installed)'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-a"
+          mkdir -p "$fixture/sdk/8.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.900/dotnet.dll"
+          echo "FIXTURE_A=$fixture" >> "$GITHUB_ENV"
+      - name: 'A: setup dotnet 8.0.x with check-latest false (offline)'
+        id: a
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_A }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+      - name: 'A: assert reused 8.0.900 with no network'
+        run: |
+          if [ "${{ steps.a.outputs.dotnet-version }}" != "8.0.900" ]; then
+            echo "Expected 8.0.900, got '${{ steps.a.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: reused local SDK offline"
+
+      # --- Scenario B: check-latest defaulting to true always goes online, even with a local match ---
+      - name: 'B: setup dotnet 8.0.x with check-latest defaulted (offline, expect failure)'
+        id: b
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_A }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+      - name: 'B: assert it failed offline despite a local match'
+        run: |
+          if [ "${{ steps.b.outcome }}" != "failure" ]; then
+            echo "Expected step B to fail (default check-latest ignores local SDKs), outcome was '${{ steps.b.outcome }}'"; exit 1
+          fi
+          echo "OK: default check-latest=true reproduces the offline failure"
+
+      # --- Scenario C: DOTNET_CHECK_LATEST env var fallback (no input set at all) ---
+      - name: 'C: prepare fixture (9.0.900 installed)'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-c"
+          mkdir -p "$fixture/sdk/9.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/9.0.900/dotnet.dll"
+          echo "FIXTURE_C=$fixture" >> "$GITHUB_ENV"
+      - name: 'C: setup dotnet 9.0.x via DOTNET_CHECK_LATEST env var (offline)'
+        id: c
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_C }}
+          DOTNET_CHECK_LATEST: 'false'
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '9.0.x'
+      - name: 'C: assert reused 9.0.900 via env var alone'
+        run: |
+          if [ "${{ steps.c.outputs.dotnet-version }}" != "9.0.900" ]; then
+            echo "Expected 9.0.900, got '${{ steps.c.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: DOTNET_CHECK_LATEST env var alone triggered local reuse"
+
+      # --- Scenario D: invalid DOTNET_CHECK_LATEST value warns and falls back to true (online) ---
+      - name: 'D: setup dotnet 9.0.x with invalid DOTNET_CHECK_LATEST (offline, expect failure)'
+        id: d
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_C }}
+          DOTNET_CHECK_LATEST: 'yes'
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '9.0.x'
+      - name: 'D: assert invalid env value falls back to true and fails offline'
+        run: |
+          if [ "${{ steps.d.outcome }}" != "failure" ]; then
+            echo "Expected step D to fail (invalid env value falls back to check-latest=true), outcome was '${{ steps.d.outcome }}'"; exit 1
+          fi
+          echo "OK: invalid DOTNET_CHECK_LATEST falls back to true"
+
+      # --- Scenario E/F: global.json rollForward floor ---
+      - name: 'E/F: prepare fixture (8.0.900 installed) and global.json project dirs'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-ef"
+          mkdir -p "$fixture/sdk/8.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.900/dotnet.dll"
+          echo "FIXTURE_EF=$fixture" >> "$GITHUB_ENV"
+
+          mkdir -p "$RUNNER_TEMP/proj-e"
+          echo '{"sdk":{"version":"8.0.999","rollForward":"latestFeature"}}' > "$RUNNER_TEMP/proj-e/global.json"
+
+          mkdir -p "$RUNNER_TEMP/proj-f"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestFeature"}}' > "$RUNNER_TEMP/proj-f/global.json"
+      - name: 'E: floor above local SDK falls back online (offline, expect failure)'
+        id: e
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_EF }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj-e/global.json'
+      - name: 'E: assert too-old local SDK was rejected'
+        run: |
+          if [ "${{ steps.e.outcome }}" != "failure" ]; then
+            echo "Expected step E to fail (local SDK is below the global.json floor), outcome was '${{ steps.e.outcome }}'"; exit 1
+          fi
+          echo "OK: global.json floor correctly rejected the too-old local SDK"
+      - name: 'F: floor at/below local SDK reuses it (offline)'
+        id: f
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_EF }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj-f/global.json'
+      - name: 'F: assert reused 8.0.900 (satisfies the floor)'
+        run: |
+          if [ "${{ steps.f.outputs.dotnet-version }}" != "8.0.900" ]; then
+            echo "Expected 8.0.900, got '${{ steps.f.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: local SDK satisfying the global.json floor was reused"
+
+      # --- Scenario G: cross-architecture requests always bypass local reuse ---
+      - name: 'G: setup dotnet 8.0.x for arm64 on an x64 host (offline, expect failure)'
+        id: g
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_A }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+          architecture: arm64
+      - name: 'G: assert cross-arch request bypassed local reuse'
+        run: |
+          if [ "${{ steps.g.outcome }}" != "failure" ]; then
+            echo "Expected step G to fail (cross-arch always installs online), outcome was '${{ steps.g.outcome }}'"; exit 1
+          fi
+          echo "OK: cross-architecture request bypassed local reuse"
+
+      # --- Scenario H: feature-band matching (8.0.1xx) picks the right band, not just the highest version ---
+      - name: 'H: prepare fixture (8.0.100, 8.0.105, 8.0.203 installed)'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-h"
+          mkdir -p "$fixture/sdk/8.0.100" "$fixture/sdk/8.0.105" "$fixture/sdk/8.0.203"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.100/dotnet.dll" "$fixture/sdk/8.0.105/dotnet.dll" "$fixture/sdk/8.0.203/dotnet.dll"
+          echo "FIXTURE_H=$fixture" >> "$GITHUB_ENV"
+      - name: 'H: setup dotnet 8.0.1xx with check-latest false (offline)'
+        id: h
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_H }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.1xx'
+          check-latest: false
+      - name: 'H: assert matched the 1xx band, not the higher 2xx one'
+        run: |
+          if [ "${{ steps.h.outputs.dotnet-version }}" != "8.0.105" ]; then
+            echo "Expected 8.0.105, got '${{ steps.h.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: feature-band matching picked the correct band"
+
+      # --- Scenario I: an orphaned SDK folder (no dotnet.dll) is ignored ---
+      - name: 'I: prepare fixture (empty 8.0.900 folder, no dotnet.dll)'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-i"
+          mkdir -p "$fixture/sdk/8.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          echo "FIXTURE_I=$fixture" >> "$GITHUB_ENV"
+      - name: 'I: setup dotnet 8.0.x with check-latest false (offline, expect failure)'
+        id: i
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_I }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+      - name: 'I: assert orphaned SDK folder was ignored'
+        run: |
+          if [ "${{ steps.i.outcome }}" != "failure" ]; then
+            echo "Expected step I to fail (orphaned folder without dotnet.dll must be ignored), outcome was '${{ steps.i.outcome }}'"; exit 1
+          fi
+          echo "OK: orphaned SDK folder correctly ignored"
+
+      # --- Scenario J: a symlinked SDK folder is recognized just like a real directory ---
+      - name: 'J: prepare fixture (8.0.900 exposed via symlink)'
+        run: |
+          real="$RUNNER_TEMP/real-sdk-j/8.0.900"
+          fixture="$RUNNER_TEMP/fixture-j"
+          mkdir -p "$real" "$fixture/sdk"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$real/dotnet.dll"
+          ln -s "$real" "$fixture/sdk/8.0.900"
+          echo "FIXTURE_J=$fixture" >> "$GITHUB_ENV"
+      - name: 'J: setup dotnet 8.0.x with check-latest false (offline)'
+        id: j
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_J }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+      - name: 'J: assert symlinked SDK folder was reused'
+        run: |
+          if [ "${{ steps.j.outputs.dotnet-version }}" != "8.0.900" ]; then
+            echo "Expected 8.0.900, got '${{ steps.j.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: symlinked SDK folder correctly recognized and reused"
+
+  # --- Scenario G (macOS variant): cross-arch bypass on an arm64-native host requesting x64 ---
+  edge-cross-arch-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout setup-dotnet fork branch
+        uses: actions/checkout@v4
+        with:
+          repository: v-chiranjib-swain/setup-dotnet
+          ref: feature/check-latest-local-sdk-reuse
+          path: setup-dotnet-src
+      - name: Prepare fixture (8.0.900 installed)
+        run: |
+          fixture="$RUNNER_TEMP/fixture-g-macos"
+          mkdir -p "$fixture/sdk/8.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.900/dotnet.dll"
+          echo "FIXTURE_G_MACOS=$fixture" >> "$GITHUB_ENV"
+      - name: Setup dotnet 8.0.x for x64 on an arm64 host (offline, expect failure)
+        id: g
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_G_MACOS }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+          architecture: x64
+      - name: Assert cross-arch request bypassed local reuse
+        run: |
+          if [ "${{ steps.g.outcome }}" != "failure" ]; then
+            echo "Expected step to fail (cross-arch always installs online), outcome was '${{ steps.g.outcome }}'"; exit 1
+          fi
+          echo "OK: cross-architecture request bypassed local reuse on arm64 host"
