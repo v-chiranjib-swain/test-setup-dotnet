@@ -8,22 +8,21 @@ env:
   BLOCKED_HTTP_PROXY: http://127.0.0.1:1
 
 jobs:
-  # Local SDK (7.0.900) is intentionally BELOW the global.json 'sdk.version'
-  # (8.0.100) declared with rollForward:latestMajor. Before the fix, the code
-  # still computes minimumVersion='8.0.100' for this branch (even though
-  # 'version' is cleared to '' and can never match), so it filters the
-  # installed SDK out and logs a misleading "does not satisfy the global.json
-  # minimum version" debug line. After the fix, minimumVersion stays undefined
-  # for 'latestMajor', so that debug line should no longer appear.
+  # Local SDK (9.0.423) is intentionally ABOVE the global.json 'sdk.version'
+  # (8.0.100) floor declared with rollForward:latestMajor. The floor check
+  # never rejects it either before or after the fix, so this is expected to
+  # show ZERO observable difference (same outcome, same debug log lines) -
+  # proving the fix is a no-op whenever the local SDK already satisfies the
+  # floor, and that 9.0.423 is never reused locally either way.
   before-fix:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare fixture (7.0.900 installed, below the phantom 8.0.100 floor)
+      - name: Prepare fixture (9.0.423 installed, above the phantom 8.0.100 floor)
         run: |
           fixture="$RUNNER_TEMP/fixture-before"
-          mkdir -p "$fixture/sdk/7.0.900"
+          mkdir -p "$fixture/sdk/9.0.423"
           touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
-          touch "$fixture/sdk/7.0.900/dotnet.dll"
+          touch "$fixture/sdk/9.0.423/dotnet.dll"
           echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
 
           mkdir -p "$RUNNER_TEMP/proj"
@@ -44,12 +43,12 @@ jobs:
   after-fix:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare fixture (7.0.900 installed, below the phantom 8.0.100 floor)
+      - name: Prepare fixture (9.0.423 installed, above the phantom 8.0.100 floor)
         run: |
           fixture="$RUNNER_TEMP/fixture-after"
-          mkdir -p "$fixture/sdk/7.0.900"
+          mkdir -p "$fixture/sdk/9.0.423"
           touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
-          touch "$fixture/sdk/7.0.900/dotnet.dll"
+          touch "$fixture/sdk/9.0.423/dotnet.dll"
           echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
 
           mkdir -p "$RUNNER_TEMP/proj"
