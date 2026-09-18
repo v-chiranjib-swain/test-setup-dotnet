@@ -253,6 +253,36 @@ jobs:
           fi
           echo "OK: symlinked SDK folder correctly recognized and reused"
 
+      # --- Scenario K: rollForward:latestMajor clears version to '', so a local SDK
+      # well above the declared floor is still never reused (minimumVersion is dead). ---
+      - name: 'K: prepare fixture (9.0.900 installed, well above the 8.0.100 floor) and global.json'
+        run: |
+          fixture="$RUNNER_TEMP/fixture-k"
+          mkdir -p "$fixture/sdk/9.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/9.0.900/dotnet.dll"
+          echo "FIXTURE_K=$fixture" >> "$GITHUB_ENV"
+
+          mkdir -p "$RUNNER_TEMP/proj-k"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj-k/global.json"
+      - name: 'K: setup dotnet via global.json rollForward:latestMajor (offline, expect failure)'
+        id: k
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@feature/check-latest-local-sdk-reuse
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE_K }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj-k/global.json'
+      - name: 'K: assert it still fell back online despite a local SDK above the floor'
+        run: |
+          if [ "${{ steps.k.outcome }}" != "failure" ]; then
+            echo "Expected step K to fail (latestMajor clears version to '', so minimumVersion is never consulted), outcome was '${{ steps.k.outcome }}'"; exit 1
+          fi
+          echo "OK: rollForward:latestMajor's minimumVersion is confirmed unreachable"
+
   # --- Scenario G (macOS variant): cross-arch bypass on an arm64-native host requesting x64 ---
   edge-cross-arch-macos:
     runs-on: macos-latest
