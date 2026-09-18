@@ -1,0 +1,292 @@
+name: global.json rollForward matrix test (official semantics vs check-latest:false)
+
+# Reference: https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward
+# Each job encodes the *official* documented behavior for one 'rollForward'
+# value as a comment, builds a fixture matching it, then checks whether
+# setup-dotnet's check-latest:false local-reuse path picks the version the
+# real 'dotnet' muxer would pick. Network is blocked throughout, so any
+# success can only come from local reuse, and any 'falls back online' means
+# the local path either isn't implemented for that value, or correctly
+# rejected the fixture.
+
+on:
+  workflow_dispatch:
+
+env:
+  SETUP_DOTNET_REF: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+  BLOCKED_HTTPS_PROXY: http://127.0.0.1:1
+  BLOCKED_HTTP_PROXY: http://127.0.0.1:1
+
+jobs:
+  # --- latestPatch (official doc example) ---
+  # "Uses the latest installed patch level that matches the requested major,
+  # minor, and feature band with a patch level >= the specified value. If not
+  # found, fails." Doc example: version 8.0.102 -> allows 8.0.102.. within
+  # the same 1xx band, e.g. 8.0.103 or 8.0.199.
+  latestPatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (8.0.100 below floor, 8.0.199 above floor, same 1xx band)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.100" "$fixture/sdk/8.0.199"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.100/dotnet.dll" "$fixture/sdk/8.0.199/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.102","rollForward":"latestPatch"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestPatch (offline)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.199 was reused (highest patch in-band, >= floor)
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.199" ]; then
+            echo "Expected local reuse of 8.0.199, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: latestPatch correctly reused the highest in-band patch >= floor"
+
+  # --- latestFeature (official doc example) ---
+  # "Uses the highest installed feature band and patch level that matches the
+  # requested major and minor with a feature band+patch >= the specified
+  # value. If not found, fails." Doc example: version 8.0.302 -> allows
+  # 8.0.302.. across any feature band, e.g. 8.0.303 or 8.0.402.
+  latestFeature:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (8.0.300 below floor, 8.0.402 above floor, different band)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.300" "$fixture/sdk/8.0.402"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.300/dotnet.dll" "$fixture/sdk/8.0.402/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.302","rollForward":"latestFeature"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestFeature (offline)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.402 was reused (highest feature band, >= floor)
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.402" ]; then
+            echo "Expected local reuse of 8.0.402, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: latestFeature correctly reused the highest feature band >= floor"
+
+  # --- latestMinor ---
+  # "Uses the highest installed minor, feature band, and patch level that
+  # matches the requested major with minor+band+patch >= the specified
+  # value. If not found, fails."
+  # setup-dotnet widens this to the bare major ('8'), which internally maps
+  # through channelForMajor() to major.minor '8.0' - constraining minor to
+  # exactly 0. This sub-case checks the common (minor=0) path; the second
+  # step checks whether a fixture with a genuinely higher minor (8.1.x) would
+  # also be picked, per the official 'any minor >= floor' semantics.
+  latestMinor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (8.0.050 below floor, 8.0.200 above floor, same minor)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.050" "$fixture/sdk/8.0.200"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.050/dotnet.dll" "$fixture/sdk/8.0.200/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestMinor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestMinor, same-minor fixture (offline)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.200 was reused
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.200" ]; then
+            echo "Expected local reuse of 8.0.200, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: latestMinor reused the highest same-minor candidate >= floor"
+
+  latestMinor-higher-minor-gap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (only 8.1.100 installed - a genuinely higher minor, still >= floor)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.1.100"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.1.100/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestMinor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestMinor, higher-minor-only fixture (offline, expect failure)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.1.100 is NOT reused (documents the minor-constraint gap)
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Expected failure (8.1.100 not matched due to hardcoded minor=0 mapping), outcome was '${{ steps.run.outcome }}'"; exit 1
+          fi
+          echo "OK (gap confirmed): a higher-minor SDK satisfying the official 'latestMinor' rule is NOT reused locally"
+
+  # --- latestMajor (official doc example) ---
+  # "Uses the highest installed .NET SDK with a version that's >= the
+  # specified value. If not found, fail." Doc example: version 7.0.200 ->
+  # allows 7.0.200 or any later version, including 8.0.xxx.
+  latestMajor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (9.0.423 - a higher major, satisfies the floor per official docs)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/9.0.423"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/9.0.423/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"7.0.200","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestMajor (offline, expect failure)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 9.0.423 is NOT reused (documents the latestMajor gap)
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Expected failure (setup-dotnet never attempts local reuse for latestMajor), outcome was '${{ steps.run.outcome }}'"; exit 1
+          fi
+          echo "OK (gap confirmed): a higher-major SDK satisfying the official 'latestMajor' rule is NOT reused locally"
+
+  # --- disable (official doc example) ---
+  # "Doesn't roll forward; an exact match is required."
+  disable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (exact 8.0.302 installed)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.302"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.302/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.302","rollForward":"disable"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:disable, exact match present (offline)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert exact 8.0.302 was reused
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.302" ]; then
+            echo "Expected local reuse of the exact 8.0.302, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: disable correctly reused only the exact declared version"
+
+  disable-no-exact-match:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (only a newer patch, 8.0.303, no exact 8.0.302)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.303"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.303/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.302","rollForward":"disable"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:disable, no exact match (offline, expect failure)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.303 is correctly rejected (disable requires an exact match)
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Expected failure (disable must not roll forward to 8.0.303), outcome was '${{ steps.run.outcome }}'"; exit 1
+          fi
+          echo "OK: disable correctly refused to substitute a newer patch"
+
+  # --- patch / feature / minor / major (legacy, non-'latest'-prefixed values) ---
+  # None of these appear in setup-dotnet's switch statement, so 'version'
+  # stays the literal declared sdk.version for all four - they're all treated
+  # as an exact pinned request by the local-reuse path, regardless of which
+  # of the four is used. Per the official docs, 'patch' should still roll
+  # forward to a newer patch within the same feature band if the exact one is
+  # missing - so this documents a (pre-existing, not introduced by this PR)
+  # simplification: only an exact match is ever reused locally for these.
+  legacy-patch-value-pinned-behavior:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (8.0.105 installed, NOT the exact declared 8.0.100)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.105"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.105/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"patch"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:patch, no exact match (offline, expect failure)
+        id: run
+        continue-on-error: true
+        uses: ${{ env.SETUP_DOTNET_REF }}
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.105 is NOT reused (documents the 'patch' pinned-only simplification)
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Expected failure (setup-dotnet treats 'patch' as a pinned exact version locally), outcome was '${{ steps.run.outcome }}'"; exit 1
+          fi
+          echo "OK (documented, pre-existing behavior): 'patch'/'feature'/'minor'/'major' are all treated as exact pinned requests locally, unlike their official roll-forward semantics"
