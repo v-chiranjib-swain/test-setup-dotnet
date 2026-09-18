@@ -1,0 +1,68 @@
+name: check-latest latestMajor fix diff test
+
+on:
+  workflow_dispatch:
+
+env:
+  BLOCKED_HTTPS_PROXY: http://127.0.0.1:1
+  BLOCKED_HTTP_PROXY: http://127.0.0.1:1
+
+jobs:
+  # Local SDK (7.0.900) is intentionally BELOW the global.json 'sdk.version'
+  # (8.0.100) declared with rollForward:latestMajor. Before the fix, the code
+  # still computes minimumVersion='8.0.100' for this branch (even though
+  # 'version' is cleared to '' and can never match), so it filters the
+  # installed SDK out and logs a misleading "does not satisfy the global.json
+  # minimum version" debug line. After the fix, minimumVersion stays undefined
+  # for 'latestMajor', so that debug line should no longer appear.
+  before-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (7.0.900 installed, below the phantom 8.0.100 floor)
+        run: |
+          fixture="$RUNNER_TEMP/fixture-before"
+          mkdir -p "$fixture/sdk/7.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/7.0.900/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via global.json rollForward:latestMajor (BEFORE the fix, commit 2a2a309)
+        id: before
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@2a2a309ce80aa41b6c43b081a5997323b14e7de1
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          ACTIONS_STEP_DEBUG: true
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+
+  after-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (7.0.900 installed, below the phantom 8.0.100 floor)
+        run: |
+          fixture="$RUNNER_TEMP/fixture-after"
+          mkdir -p "$fixture/sdk/7.0.900"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/7.0.900/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via global.json rollForward:latestMajor (AFTER the fix, commit efe6a36)
+        id: after
+        continue-on-error: true
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          ACTIONS_STEP_DEBUG: true
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
