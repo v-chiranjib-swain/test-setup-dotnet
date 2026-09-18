@@ -13,7 +13,6 @@ on:
   workflow_dispatch:
 
 env:
-  SETUP_DOTNET_REF: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
   BLOCKED_HTTPS_PROXY: http://127.0.0.1:1
   BLOCKED_HTTP_PROXY: http://127.0.0.1:1
 
@@ -38,7 +37,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestPatch (offline)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -73,7 +72,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestFeature (offline)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -112,7 +111,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMinor, same-minor fixture (offline)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -142,7 +141,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMinor, higher-minor-only fixture (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -176,7 +175,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMajor (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -208,7 +207,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, exact match present (offline)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -238,7 +237,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, no exact match (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -276,7 +275,7 @@ jobs:
       - name: Setup dotnet via rollForward:patch, no exact match (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: ${{ env.SETUP_DOTNET_REF }}
+        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
