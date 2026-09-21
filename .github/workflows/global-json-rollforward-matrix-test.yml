@@ -8,6 +8,9 @@ name: global.json rollForward matrix test (official semantics vs check-latest:fa
 # success can only come from local reuse, and any 'falls back online' means
 # the local path either isn't implemented for that value, or correctly
 # rejected the fixture.
+#
+# Pinned to v-mahabaleshwars/setup-dotnet@1db287d: the PR's latest commit,
+# after the author addressed the latestMajor/latestMinor local-reuse gap.
 
 on:
   workflow_dispatch:
@@ -37,7 +40,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestPatch (offline)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -72,7 +75,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestFeature (offline)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -111,7 +114,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMinor, same-minor fixture (offline)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -138,10 +141,10 @@ jobs:
           echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/proj"
           echo '{"sdk":{"version":"8.0.100","rollForward":"latestMinor"}}' > "$RUNNER_TEMP/proj/global.json"
-      - name: Setup dotnet via rollForward:latestMinor, higher-minor-only fixture (offline, expect failure)
+      - name: Setup dotnet via rollForward:latestMinor, higher-minor-only fixture (offline, gap now fixed - expect success)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -149,12 +152,12 @@ jobs:
         with:
           check-latest: false
           global-json-file: '${{ runner.temp }}/proj/global.json'
-      - name: Assert 8.1.100 is NOT reused (documents the minor-constraint gap)
+      - name: Assert 8.1.100 IS now reused (minor-constraint gap fixed)
         run: |
-          if [ "${{ steps.run.outcome }}" != "failure" ]; then
-            echo "Expected failure (8.1.100 not matched due to hardcoded minor=0 mapping), outcome was '${{ steps.run.outcome }}'"; exit 1
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.1.100" ]; then
+            echo "Expected local reuse of 8.1.100, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
           fi
-          echo "OK (gap confirmed): a higher-minor SDK satisfying the official 'latestMinor' rule is NOT reused locally"
+          echo "OK (fix confirmed): a higher-minor SDK satisfying the official 'latestMinor' rule is now reused locally"
 
   # --- latestMajor (official doc example) ---
   # "Uses the highest installed .NET SDK with a version that's >= the
@@ -172,10 +175,10 @@ jobs:
           echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/proj"
           echo '{"sdk":{"version":"7.0.200","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj/global.json"
-      - name: Setup dotnet via rollForward:latestMajor (offline, expect failure)
+      - name: Setup dotnet via rollForward:latestMajor (offline, gap now fixed - expect success)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -183,12 +186,12 @@ jobs:
         with:
           check-latest: false
           global-json-file: '${{ runner.temp }}/proj/global.json'
-      - name: Assert 9.0.423 is NOT reused (documents the latestMajor gap)
+      - name: Assert 9.0.423 IS now reused (latestMajor gap fixed)
         run: |
-          if [ "${{ steps.run.outcome }}" != "failure" ]; then
-            echo "Expected failure (setup-dotnet never attempts local reuse for latestMajor), outcome was '${{ steps.run.outcome }}'"; exit 1
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "9.0.423" ]; then
+            echo "Expected local reuse of 9.0.423, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
           fi
-          echo "OK (gap confirmed): a higher-major SDK satisfying the official 'latestMajor' rule is NOT reused locally"
+          echo "OK (fix confirmed): a higher-major SDK satisfying the official 'latestMajor' rule is now reused locally"
 
   # --- disable (official doc example) ---
   # "Doesn't roll forward; an exact match is required."
@@ -207,7 +210,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, exact match present (offline)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -237,7 +240,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, no exact match (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -275,7 +278,7 @@ jobs:
       - name: Setup dotnet via rollForward:patch, no exact match (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: v-chiranjib-swain/setup-dotnet@efe6a36003bd6bbfe608a75d6bce0b24346b395a
+        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
