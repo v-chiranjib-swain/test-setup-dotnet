@@ -292,3 +292,73 @@ jobs:
             echo "Expected local reuse of 8.0.105, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
           fi
           echo "OK (fix confirmed): legacy 'patch' now rolls forward to the highest patch in the same band, matching official semantics"
+
+  # --- dotnet-quality is ignored for a full A.B.C sdk.version (new in be40b43) ---
+  # qualityApplies() now returns false whenever `this.version` is a valid full
+  # semver, so 'dotnet-quality: preview' no longer widens the local-reuse
+  # candidate filter to prerelease-only when a rollForward policy is declared
+  # alongside an exact sdk.version - matching how the online resolver already
+  # ignores quality for an exact version. Only a prerelease-only band is
+  # installed here, so a match means quality was NOT ignored (old, wrong
+  # behavior); no match (fallback online, offline failure) means it was.
+  quality-ignored-for-full-sdk-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (only a prerelease 8.0.105-preview.1 in-band, no GA candidate)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.105-preview.1"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.105-preview.1/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"patch"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:patch, dotnet-quality:preview, prerelease-only fixture (offline, expect failure)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          dotnet-quality: preview
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert the prerelease-only fixture was correctly rejected (quality ignored for full sdk.version)
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Expected failure (a full sdk.version + rollForward must require a GA candidate, ignoring dotnet-quality), outcome was '${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK (fix confirmed): dotnet-quality:preview did not widen the local match to the prerelease-only candidate"
+
+  quality-ignored-for-full-sdk-version-ga-present:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (prerelease 8.0.105-preview.1 AND GA 8.0.106 in-band)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.105-preview.1" "$fixture/sdk/8.0.106"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/8.0.105-preview.1/dotnet.dll" "$fixture/sdk/8.0.106/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"patch"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:patch, dotnet-quality:preview, GA+prerelease fixture (offline, expect GA reused)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          dotnet-quality: preview
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.106 (GA) was reused, not the prerelease 8.0.105-preview.1
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.106" ]; then
+            echo "Expected local reuse of the GA 8.0.106 (quality ignored), got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK (fix confirmed): dotnet-quality:preview was ignored for the full sdk.version; the GA candidate was reused instead of the higher-numbered prerelease"
