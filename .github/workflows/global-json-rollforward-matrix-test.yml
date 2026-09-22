@@ -9,8 +9,10 @@ name: global.json rollForward matrix test (official semantics vs check-latest:fa
 # the local path either isn't implemented for that value, or correctly
 # rejected the fixture.
 #
-# Pinned to v-mahabaleshwars/setup-dotnet@1db287d: the PR's latest commit,
-# after the author addressed the latestMajor/latestMinor local-reuse gap.
+# Pinned to v-mahabaleshwars/setup-dotnet@be40b433: the PR's latest commit,
+# which addresses the latestMajor/latestMinor local-reuse gap AND rewrites
+# rollForward matching so legacy 'patch'/'feature'/'minor'/'major' values
+# roll forward to the nearest higher band locally too (previously exact-pin-only).
 
 on:
   workflow_dispatch:
@@ -40,7 +42,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestPatch (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -75,7 +77,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestFeature (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -114,7 +116,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMinor, same-minor fixture (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -144,7 +146,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMinor, higher-minor-only fixture (offline, gap now fixed - expect success)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -178,7 +180,7 @@ jobs:
       - name: Setup dotnet via rollForward:latestMajor (offline, gap now fixed - expect success)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -210,7 +212,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, exact match present (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -240,7 +242,7 @@ jobs:
       - name: Setup dotnet via rollForward:disable, no exact match (offline, expect failure)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -256,17 +258,15 @@ jobs:
           echo "OK: disable correctly refused to substitute a newer patch"
 
   # --- patch / feature / minor / major (legacy, non-'latest'-prefixed values) ---
-  # None of these appear in setup-dotnet's switch statement, so 'version'
-  # stays the literal declared sdk.version for all four - they're all treated
-  # as an exact pinned request by the local-reuse path, regardless of which
-  # of the four is used. Per the official docs, 'patch' should still roll
-  # forward to a newer patch within the same feature band if the exact one is
-  # missing - so this documents a (pre-existing, not introduced by this PR)
-  # simplification: only an exact match is ever reused locally for these.
+  # 'version' still stays the literal declared sdk.version for all four (no
+  # widening like the 'latest*' values), but findByRollForward() now scopes
+  # candidates to the same feature band ('patch') and picks the highest
+  # match in-band if the exact one is missing - matching the official
+  # 'patch' roll-forward semantics rather than requiring an exact pin.
   legacy-patch-value-pinned-behavior:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare fixture (8.0.105 installed, NOT the exact declared 8.0.100)
+      - name: Prepare fixture (8.0.105 installed, NOT the exact declared 8.0.100, same patch band)
         run: |
           fixture="$RUNNER_TEMP/fixture"
           mkdir -p "$fixture/sdk/8.0.105"
@@ -275,10 +275,10 @@ jobs:
           echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/proj"
           echo '{"sdk":{"version":"8.0.100","rollForward":"patch"}}' > "$RUNNER_TEMP/proj/global.json"
-      - name: Setup dotnet via rollForward:patch, no exact match (offline, expect failure)
+      - name: Setup dotnet via rollForward:patch, no exact match (offline, gap now fixed - expect success)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@1db287d46d387198aa65c58ed0ff98c8bc3e0fb4
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -286,9 +286,9 @@ jobs:
         with:
           check-latest: false
           global-json-file: '${{ runner.temp }}/proj/global.json'
-      - name: Assert 8.0.105 is NOT reused (documents the 'patch' pinned-only simplification)
+      - name: Assert 8.0.105 IS now reused (legacy 'patch' now rolls forward within its band)
         run: |
-          if [ "${{ steps.run.outcome }}" != "failure" ]; then
-            echo "Expected failure (setup-dotnet treats 'patch' as a pinned exact version locally), outcome was '${{ steps.run.outcome }}'"; exit 1
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.105" ]; then
+            echo "Expected local reuse of 8.0.105, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
           fi
-          echo "OK (documented, pre-existing behavior): 'patch'/'feature'/'minor'/'major' are all treated as exact pinned requests locally, unlike their official roll-forward semantics"
+          echo "OK (fix confirmed): legacy 'patch' now rolls forward to the highest patch in the same band, matching official semantics"
