@@ -1,0 +1,78 @@
+name: bare 'latest' quality-applies test (dotnet-quality honored with no known major)
+
+# qualityApplies() returns `true` unconditionally for `dotnet-version: latest`
+# with no `dotnet-channel`, since the major version can't be determined
+# locally - this is meant to keep 'preview'/'daily' quality honored for local
+# SDK reuse even though there's no major digit to compare against
+# QUALITY_INPUT_MINIMAL_MAJOR_TAG. This branch is unchanged by the PR
+# author's latest commits (be40b43) - the doc comment requested in review is
+# still outstanding. These jobs test the actual runtime effect: does a
+# prerelease candidate get picked over a numerically-higher GA candidate
+# when quality is requested, isolating qualityApplies()'s true/false effect.
+#
+# Pinned to v-mahabaleshwars/setup-dotnet@be40b433.
+
+on:
+  workflow_dispatch:
+
+env:
+  BLOCKED_HTTPS_PROXY: http://127.0.0.1:1
+  BLOCKED_HTTP_PROXY: http://127.0.0.1:1
+
+jobs:
+  bare-latest-quality-preview-honored:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (GA 9.0.100 and prerelease 8.0.200-preview.1, no channel/global.json)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/9.0.100" "$fixture/sdk/8.0.200-preview.1"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/9.0.100/dotnet.dll" "$fixture/sdk/8.0.200-preview.1/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+      - name: Setup dotnet via dotnet-version:latest, dotnet-quality:preview, no dotnet-channel (offline)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          dotnet-version: latest
+          dotnet-quality: preview
+      - name: Assert the prerelease 8.0.200-preview.1 was reused, not the numerically-higher GA 9.0.100
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.200-preview.1" ]; then
+            echo "Expected local reuse of the prerelease 8.0.200-preview.1 (quality honored), got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: qualityApplies() returning true for bare 'latest' with no channel keeps 'preview' honored, even with no known major to compare"
+
+  bare-latest-no-quality-picks-ga:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare fixture (same GA 9.0.100 and prerelease 8.0.200-preview.1, no dotnet-quality requested)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/9.0.100" "$fixture/sdk/8.0.200-preview.1"
+          touch "$fixture/dotnet" && chmod +x "$fixture/dotnet"
+          touch "$fixture/sdk/9.0.100/dotnet.dll" "$fixture/sdk/8.0.200-preview.1/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+      - name: Setup dotnet via dotnet-version:latest, no dotnet-quality, no dotnet-channel (offline)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          dotnet-version: latest
+      - name: Assert the GA 9.0.100 was reused (no quality requested, prerelease excluded)
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "9.0.100" ]; then
+            echo "Expected local reuse of the GA 9.0.100, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: without dotnet-quality, the prerelease candidate is excluded and the GA candidate is picked - isolates job 1's quality-honored effect"
