@@ -33,7 +33,7 @@ jobs:
       - name: Setup dotnet via dotnet-version:latest, dotnet-quality:preview, no dotnet-channel (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        uses: v-mahabaleshwars/setup-dotnet@37534882300ef1194fd08fd3b32401d15cd465d7
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
@@ -62,7 +62,7 @@ jobs:
       - name: Setup dotnet via dotnet-version:latest, no dotnet-quality, no dotnet-channel (offline)
         id: run
         continue-on-error: true
-        uses: v-mahabaleshwars/setup-dotnet@be40b43376fc2c772e5f8c0e088321206a1e4211
+        uses: v-mahabaleshwars/setup-dotnet@37534882300ef1194fd08fd3b32401d15cd465d7
         env:
           DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
           https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
