@@ -362,3 +362,73 @@ jobs:
             echo "Expected local reuse of the GA 8.0.106 (quality ignored), got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
           fi
           echo "OK (fix confirmed): dotnet-quality:preview was ignored for the full sdk.version; the GA candidate was reused instead of the higher-numbered prerelease"
+
+  # --- Windows coverage: hasDotnetMuxer()'s IS_WINDOWS branch skips the
+  # accessSync(X_OK) executable check, relying on isFile() alone - untested
+  # on a real Windows runner until now. Mirrors the latestMajor job above.
+  latestMajor-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare fixture (9.0.423 - a higher major, satisfies the floor per official docs)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/9.0.423"
+          touch "$fixture/dotnet.exe"
+          touch "$fixture/sdk/9.0.423/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"7.0.200","rollForward":"latestMajor"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:latestMajor (offline, gap now fixed - expect success)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@37534882300ef1194fd08fd3b32401d15cd465d7
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 9.0.423 IS now reused (latestMajor gap fixed, on Windows)
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "9.0.423" ]; then
+            echo "Expected local reuse of 9.0.423, got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: latestMajor fix also holds on windows-latest"
+
+  quality-ignored-for-full-sdk-version-ga-present-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare fixture (prerelease 8.0.105-preview.1 AND GA 8.0.106 in-band)
+        run: |
+          fixture="$RUNNER_TEMP/fixture"
+          mkdir -p "$fixture/sdk/8.0.105-preview.1" "$fixture/sdk/8.0.106"
+          touch "$fixture/dotnet.exe"
+          touch "$fixture/sdk/8.0.105-preview.1/dotnet.dll" "$fixture/sdk/8.0.106/dotnet.dll"
+          echo "FIXTURE=$fixture" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/proj"
+          echo '{"sdk":{"version":"8.0.100","rollForward":"patch"}}' > "$RUNNER_TEMP/proj/global.json"
+      - name: Setup dotnet via rollForward:patch, dotnet-quality:preview, GA+prerelease fixture (offline, expect GA reused)
+        id: run
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@37534882300ef1194fd08fd3b32401d15cd465d7
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.FIXTURE }}
+          https_proxy: ${{ env.BLOCKED_HTTPS_PROXY }}
+          http_proxy: ${{ env.BLOCKED_HTTP_PROXY }}
+        with:
+          check-latest: false
+          dotnet-quality: preview
+          global-json-file: '${{ runner.temp }}/proj/global.json'
+      - name: Assert 8.0.106 (GA) was reused, not the prerelease (on Windows)
+        run: |
+          if [ "${{ steps.run.outputs.dotnet-version }}" != "8.0.106" ]; then
+            echo "Expected local reuse of the GA 8.0.106 (quality ignored), got outcome='${{ steps.run.outcome }}' output='${{ steps.run.outputs.dotnet-version }}'"; exit 1
+          fi
+          echo "OK: quality-ignored-for-full-sdk-version fix also holds on windows-latest"
