@@ -1,0 +1,75 @@
+name: Issue-642-optin Clean Container Test (skip-lts-prepass)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  default-behavior:
+    name: "default (skip-lts-prepass unset) | ubuntu:24.04 container | 9.0.x"
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: Install prerequisites
+        run: apt-get update -qq && apt-get install -y -qq curl tar ca-certificates libicu-dev
+
+      - name: "BEFORE - confirm zero .NET in fresh container"
+        run: |
+          dotnet --version 2>/dev/null || echo "(no dotnet — clean slate confirmed)"
+          ls /root/.dotnet 2>/dev/null || echo "/root/.dotnet not present"
+          ls /usr/share/dotnet 2>/dev/null || echo "/usr/share/dotnet not present"
+
+      - name: "setup-dotnet issue-642-optin (default — Pass 1 still runs)"
+        id: install
+        uses: chiranjib-swain/setup-dotnet@issue-642-optin
+        with:
+          dotnet-version: 9.0.x
+
+      - name: "AFTER - default result (Pass 1 adds LTS runtime from scratch)"
+        run: |
+          echo "DOTNET_ROOT = $DOTNET_ROOT"
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          dotnet --version
+          dotnet --list-sdks
+          dotnet --list-runtimes
+          echo "--- dotnet --info (Host: Version is the key signal) ---"
+          dotnet --info
+          for p in /root/.dotnet/host/fxr /usr/share/dotnet/host/fxr; do
+            [ -d "$p" ] && echo "$p:" && ls "$p" || true
+          done
+
+  skip-lts-prepass:
+    name: "skip-lts-prepass=true | ubuntu:24.04 container | 9.0.x"
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: Install prerequisites
+        run: apt-get update -qq && apt-get install -y -qq curl tar ca-certificates libicu-dev
+
+      - name: "BEFORE - confirm zero .NET in fresh container"
+        run: |
+          dotnet --version 2>/dev/null || echo "(no dotnet — clean slate confirmed)"
+          ls /root/.dotnet 2>/dev/null || echo "/root/.dotnet not present"
+          ls /usr/share/dotnet 2>/dev/null || echo "/usr/share/dotnet not present"
+
+      - name: "setup-dotnet issue-642-optin (skip-lts-prepass=true — Pass 1 skipped)"
+        id: install
+        uses: chiranjib-swain/setup-dotnet@issue-642-optin
+        with:
+          dotnet-version: 9.0.x
+          skip-lts-prepass: true
+
+      - name: "AFTER - opt-in result (no LTS runtime — SDK installer only)"
+        run: |
+          echo "DOTNET_ROOT = $DOTNET_ROOT"
+          echo "action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          dotnet --version
+          dotnet --list-sdks
+          dotnet --list-runtimes
+          echo "--- dotnet --info (Host: Version is the key signal) ---"
+          dotnet --info
+          for p in /root/.dotnet/host/fxr /usr/share/dotnet/host/fxr; do
+            [ -d "$p" ] && echo "$p:" && ls "$p" || true
+          done
