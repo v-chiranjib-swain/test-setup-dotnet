@@ -1,0 +1,78 @@
+name: Issue 642 Opt-in (skip-lts-prepass) - 6 GitHub-hosted runners
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: "${{ matrix.os }} / skip-lts-prepass=${{ matrix.skip_lts_prepass }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - windows-11-arm
+          - macos-15-intel
+          - macos-latest
+        skip_lts_prepass: [false, true]
+
+    steps:
+      - name: "BEFORE — preinstalled muxer and host/fxr"
+        shell: bash
+        run: |
+          echo "============================================================"
+          echo " Runner OS  : $RUNNER_OS"
+          echo " Runner arch: $(uname -m)"
+          echo " skip-lts-prepass: ${{ matrix.skip_lts_prepass }}"
+          echo "============================================================"
+          echo ""
+          echo "--- muxer version (preinstalled) ---"
+          dotnet --version 2>/dev/null || echo "(none)"
+          echo ""
+          echo "--- host/fxr directories ---"
+          for p in \
+            "$HOME/.dotnet/host/fxr" \
+            "/usr/share/dotnet/host/fxr" \
+            "${PROGRAMFILES}/dotnet/host/fxr"
+          do
+            [ -d "$p" ] && echo "  $p:" && ls "$p" || true
+          done
+
+      - name: "setup-dotnet — 9.0.x, skip-lts-prepass=${{ matrix.skip_lts_prepass }}"
+        id: install
+        uses: chiranjib-swain/setup-dotnet@issue-642-optin
+        with:
+          dotnet-version: '9.0.x'
+          skip-lts-prepass: ${{ matrix.skip_lts_prepass }}
+
+      - name: "AFTER — DOTNET_ROOT, muxer, SDKs, runtimes, host/fxr"
+        shell: bash
+        run: |
+          echo "============================================================"
+          echo " DOTNET_ROOT = $DOTNET_ROOT"
+          echo " action output dotnet-version = ${{ steps.install.outputs.dotnet-version }}"
+          echo "============================================================"
+          echo ""
+          echo "--- dotnet --info (Host: Version is the key signal) ---"
+          dotnet --info
+          echo ""
+          echo "--- installed SDKs ---"
+          dotnet --list-sdks
+          echo ""
+          echo "--- installed runtimes ---"
+          dotnet --list-runtimes
+          echo ""
+          echo "--- host/fxr directories (LTS entry present only when skip-lts-prepass=false) ---"
+          for p in \
+            "$HOME/.dotnet/host/fxr" \
+            "/usr/share/dotnet/host/fxr" \
+            "${PROGRAMFILES}/dotnet/host/fxr"
+          do
+            [ -d "$p" ] && echo "  $p:" && ls "$p" || true
+          done
