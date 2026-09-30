@@ -1,0 +1,110 @@
+name: macOS Self-Hosted ARM64 Test (skip-lts-prepass)
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean_slate:
+        description: 'Remove preinstalled .NET before each job (simulate clean slate)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  # -- Job 1: default (Pass 1 still runs) -------------------------------------
+  default-self-hosted-macos-arm64:
+    name: "default (skip-lts-prepass unset) | self-hosted macOS ARM64 | 9.0.x"
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+
+      - name: "Clean slate - remove any preinstalled or leftover .NET"
+        if: ${{ inputs.clean_slate }}
+        shell: bash
+        run: |
+          rm -rf "$HOME/.dotnet"
+          rm -rf /usr/local/share/dotnet
+          echo "Clean slate confirmed - .NET directories removed"
+
+      - name: "BEFORE - verify machine state"
+        shell: bash
+        run: |
+          dotnet --version 2>/dev/null || echo "(no dotnet - clean slate confirmed)"
+          echo "\$HOME/.dotnet exists: $([ -d "$HOME/.dotnet" ] && echo true || echo false)"
+          echo "/usr/local/share/dotnet exists: $([ -d /usr/local/share/dotnet ] && echo true || echo false)"
+
+      - uses: actions/checkout@v4
+
+      - name: "setup-dotnet issue-642-optin (default - Pass 1 still runs)"
+        id: install
+        uses: chiranjib-swain/setup-dotnet@issue-642-optin
+        with:
+          dotnet-version: 9.0.x
+
+      - name: "AFTER - default result (Pass 1 adds LTS runtime)"
+        shell: bash
+        run: |
+          echo "=== DOTNET_ROOT ==="
+          echo "$DOTNET_ROOT"
+          echo "=== action output dotnet-version ==="
+          echo "${{ steps.install.outputs.dotnet-version }}"
+          echo "=== dotnet --version ==="
+          dotnet --version
+          echo "=== SDKs ==="
+          dotnet --list-sdks
+          echo "=== Runtimes ==="
+          dotnet --list-runtimes
+          echo "=== dotnet --info (Host: Version is the key signal) ==="
+          dotnet --info
+          echo "=== host/fxr ==="
+          ls "$DOTNET_ROOT/host/fxr" 2>/dev/null || true
+
+  # -- Job 2: skip-lts-prepass=true (Pass 1 skipped) --------------------------
+  skip-lts-prepass-self-hosted-macos-arm64:
+    name: "skip-lts-prepass=true | self-hosted macOS ARM64 | 9.0.x"
+    runs-on: [self-hosted, macOS, ARM64]
+    needs: default-self-hosted-macos-arm64
+    steps:
+
+      - name: "Clean slate - remove any preinstalled or leftover .NET"
+        if: ${{ inputs.clean_slate }}
+        shell: bash
+        run: |
+          rm -rf "$HOME/.dotnet"
+          rm -rf /usr/local/share/dotnet
+          echo "Clean slate confirmed - .NET directories removed"
+
+      - name: "BEFORE - verify machine state"
+        shell: bash
+        run: |
+          dotnet --version 2>/dev/null || echo "(no dotnet - clean slate confirmed)"
+          echo "\$HOME/.dotnet exists: $([ -d "$HOME/.dotnet" ] && echo true || echo false)"
+          echo "/usr/local/share/dotnet exists: $([ -d /usr/local/share/dotnet ] && echo true || echo false)"
+
+      - uses: actions/checkout@v4
+
+      - name: "setup-dotnet issue-642-optin (skip-lts-prepass=true - Pass 1 skipped)"
+        id: install
+        uses: chiranjib-swain/setup-dotnet@issue-642-optin
+        with:
+          dotnet-version: 9.0.x
+          skip-lts-prepass: true
+
+      - name: "AFTER - opt-in result (no LTS runtime)"
+        shell: bash
+        run: |
+          echo "=== DOTNET_ROOT ==="
+          echo "$DOTNET_ROOT"
+          echo "=== action output dotnet-version ==="
+          echo "${{ steps.install.outputs.dotnet-version }}"
+          echo "=== dotnet --version ==="
+          dotnet --version
+          echo "=== SDKs ==="
+          dotnet --list-sdks
+          echo "=== Runtimes ==="
+          dotnet --list-runtimes
+          echo "=== dotnet --info (Host: Version is the key signal) ==="
+          dotnet --info
+          echo "=== host/fxr ==="
+          ls "$DOTNET_ROOT/host/fxr" 2>/dev/null || true
