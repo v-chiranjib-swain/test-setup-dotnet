@@ -1,0 +1,201 @@
+name: Internal PR 3 - runtime installation and multi-target tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Runtime installation and net8/net9 tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/runtime-pr-dotnet
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_ROLL_FORWARD: LatestPatch
+
+    steps:
+      - name: Record and verify the internal PR revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the internal PR head' }
+          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+            throw "PR head changed to $head; review the new revision before testing"
+          }
+          if (Test-Path $env:DOTNET_INSTALL_DIR) {
+            throw "Expected an empty installation directory: $env:DOTNET_INSTALL_DIR"
+          }
+          if (Test-Path (Join-Path $env:GITHUB_WORKSPACE 'global.json')) {
+            throw 'Unexpected global.json could trigger SDK installation'
+          }
+          "Testing v-mahabaleshwars/setup-dotnet#3 at $head" |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Install only runtime 8 from the internal PR branch
+        id: runtime
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.x'
+
+      - name: Assert runtime-only installation has no SDK
+        env:
+          INSTALLED_VERSION: ${{ steps.runtime.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:DOTNET_ROOT $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $sdks = @(& $exe --list-sdks)
+          if ($LASTEXITCODE -ne 0) { throw 'SDK inventory failed' }
+          if ($sdks.Count -ne 0) { throw "Runtime-only installation contains SDKs: $sdks" }
+          $runtimes = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
+          $runtimes | Write-Output
+          foreach ($product in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+            $pattern = '^' + [regex]::Escape($product) + ' 8\.0\.\d+ '
+            if (-not ($runtimes -match $pattern)) { throw "Missing $product 8.0" }
+          }
+          if ($runtimes.Count -ne 2) { throw "Unexpected runtime inventory: $runtimes" }
+          if ($env:INSTALLED_VERSION -notmatch '^8\.0\.\d+$') {
+            throw "Unexpected runtime-only output: $env:INSTALLED_VERSION"
+          }
+          "Runtime-only installation passed: $env:INSTALLED_VERSION; no SDKs." |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Install SDK 10 and runtimes 8 and 9 from the internal PR branch
+        id: mixed
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-runtime: |
+            8.0.x
+            9.0.x
+          skip-lts-prepass: true
+
+      - name: Assert mixed installation and active dotnet path
+        env:
+          INSTALLED_VERSION: ${{ steps.mixed.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:DOTNET_ROOT $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $active = (Get-Command dotnet).Source
+          if ([IO.Path]::GetFullPath($active) -ne [IO.Path]::GetFullPath($exe)) {
+            throw "PATH selected $active instead of the isolated installation $exe"
+          }
+          $sdks = @(& $exe --list-sdks)
+          if ($LASTEXITCODE -ne 0) { throw 'SDK inventory failed' }
+          if ($sdks.Count -ne 1 -or $sdks[0] -notmatch '^10\.0\.\d+ ') {
+            throw "Expected only SDK 10, got: $sdks"
+          }
+          $runtimes = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
+          $sdks + $runtimes | Write-Output
+          foreach ($product in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+            foreach ($major in @(8, 9)) {
+              $pattern = '^' + [regex]::Escape($product) + " $major\.0\.\d+ "
+              if (-not ($runtimes -match $pattern)) { throw "Missing $product $major.0" }
+            }
+          }
+          $sdkVersion = ($sdks[0] -split ' ')[0]
+          if ($env:INSTALLED_VERSION -ne $sdkVersion) {
+            throw "Output $env:INSTALLED_VERSION does not match SDK $sdkVersion"
+          }
+          & $exe --info
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet --info failed' }
+          "Mixed installation passed: SDK $sdkVersion and runtimes 8/9." |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Create a real multi-targeted test project
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $env:RUNNER_TEMP 'runtime-pr-tests'
+          New-Item -ItemType Directory -Path $project | Out-Null
+          @'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+              <IsTestProject>true</IsTestProject>
+              <IsPackable>false</IsPackable>
+            </PropertyGroup>
+            <ItemGroup>
+              <FrameworkReference Include="Microsoft.AspNetCore.App" />
+              <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+              <PackageReference Include="xunit" Version="2.9.2" />
+              <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+                <PrivateAssets>all</PrivateAssets>
+              </PackageReference>
+            </ItemGroup>
+          </Project>
+          '@ | Set-Content (Join-Path $project 'RuntimeTests.csproj')
+          @'
+          using System;
+          using System.Runtime.InteropServices;
+          using Xunit;
+          using Xunit.Abstractions;
+
+          public class RuntimeSelectionTests
+          {
+              private readonly ITestOutputHelper output;
+
+              public RuntimeSelectionTests(ITestOutputHelper output)
+              {
+                  this.output = output;
+              }
+
+              [Fact]
+              public void RunsOnTheRequestedRuntimeMajor()
+              {
+          #if NET8_0
+                  const int expectedMajor = 8;
+          #elif NET9_0
+                  const int expectedMajor = 9;
+          #else
+          #error Unexpected target framework
+          #endif
+                  output.WriteLine($"Actual runtime: {RuntimeInformation.FrameworkDescription}");
+                  output.WriteLine($"Runtime directory: {RuntimeEnvironment.GetRuntimeDirectory()}");
+                  Assert.Equal(expectedMajor, Environment.Version.Major);
+                  Assert.Equal("0", Environment.GetEnvironmentVariable("DOTNET_MULTILEVEL_LOOKUP"));
+              }
+          }
+          '@ | Set-Content (Join-Path $project 'RuntimeSelectionTests.cs')
+
+      - name: Run and verify actual tests on .NET 8 and .NET 9
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $env:RUNNER_TEMP 'runtime-pr-tests/RuntimeTests.csproj'
+          $results = Join-Path $env:RUNNER_TEMP 'runtime-pr-test-results'
+          foreach ($framework in @('net8.0', 'net9.0')) {
+            dotnet test $project --framework $framework --configuration Release `
+              --logger "trx;LogFileName=$framework.trx" `
+              --logger 'console;verbosity=detailed' --results-directory $results
+            if ($LASTEXITCODE -ne 0) { throw "dotnet test failed for $framework" }
+            [xml]$trx = Get-Content (Join-Path $results "$framework.trx") -Raw
+            $counters = $trx.TestRun.ResultSummary.Counters
+            if ([int]$counters.executed -ne 1 -or [int]$counters.passed -ne 1 -or
+                [int]$counters.failed -ne 0) {
+              throw "Expected one executed and passing test for $framework"
+            }
+            "$framework : 1 test executed and passed on its own runtime major." |
+              Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-pr-results-${{ matrix.os }}
+          path: ${{ runner.temp }}/runtime-pr-test-results/*.trx
+          if-no-files-found: warn
