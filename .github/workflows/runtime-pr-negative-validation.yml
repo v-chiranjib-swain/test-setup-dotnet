@@ -1,0 +1,125 @@
+name: Internal PR 3 - reproduce runtime input validation gaps
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    name: Runtime validation gaps (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+
+    steps:
+      - name: Verify the tested revision and isolate installation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the internal PR head' }
+          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+            throw "PR head changed to $head; review the new revision before testing"
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP 'runtime-pr-negative-dotnet'
+          if (Test-Path $installDir) { throw "Expected an empty directory: $installDir" }
+          if (Test-Path (Join-Path $env:GITHUB_WORKSPACE 'global.json')) {
+            throw 'Unexpected global.json could trigger SDK installation'
+          }
+          "DOTNET_INSTALL_DIR=$installDir" | Add-Content $env:GITHUB_ENV
+          "Testing v-mahabaleshwars/setup-dotnet#3 at $head" |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Control - invalid SDK quality
+        id: sdk_quality
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: unsupported-quality
+
+      - name: Gap 1 - invalid runtime quality with wildcard version
+        id: runtime_quality
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: unsupported-quality
+
+      - name: Gap 1 - invalid runtime quality with exact version
+        id: exact_quality
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.0'
+          dotnet-quality: unsupported-quality
+
+      - name: Gap 2 - SDK feature-band syntax used as a runtime
+        id: feature_band
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.4xx'
+
+      - name: Verify and report reproduced behavior
+        if: always()
+        env:
+          SDK_QUALITY: ${{ steps.sdk_quality.outcome }}
+          RUNTIME_QUALITY: ${{ steps.runtime_quality.outcome }}
+          EXACT_QUALITY: ${{ steps.exact_quality.outcome }}
+          EXACT_VERSION: ${{ steps.exact_quality.outputs.dotnet-version }}
+          FEATURE_BAND: ${{ steps.feature_band.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:SDK_QUALITY -ne 'failure') {
+            throw "Expected SDK quality rejection, got $env:SDK_QUALITY"
+          }
+          if ($env:RUNTIME_QUALITY -ne 'failure') {
+            throw "Expected installer-level runtime quality failure, got $env:RUNTIME_QUALITY"
+          }
+          if ($env:EXACT_QUALITY -ne 'success' -or $env:EXACT_VERSION -ne '8.0.0') {
+            throw "Exact-version behavior changed: $env:EXACT_QUALITY / $env:EXACT_VERSION"
+          }
+          if ($env:FEATURE_BAND -ne 'failure') {
+            throw "Expected feature-band installation failure, got $env:FEATURE_BAND"
+          }
+          $exe = Join-Path $env:DOTNET_ROOT $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $sdks = @(& $exe --list-sdks)
+          if ($LASTEXITCODE -ne 0 -or $sdks.Count -ne 0) {
+            throw "Expected no SDK installation, got: $sdks"
+          }
+          $runtimes = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
+          foreach ($product in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+            $pattern = '^' + [regex]::Escape($product) + ' 8\.0\.0 '
+            if (-not ($runtimes -match $pattern)) { throw "Missing $product 8.0.0" }
+          }
+          @"
+          ## Reproduction results
+          This run reproduces current behavior; a green job does not mean validation is correct.
+
+          | Input | Observed outcome |
+          |---|---|
+          | SDK 10.0.x + unsupported quality | Rejected |
+          | Runtime 8.0.x + unsupported quality | Installer failure |
+          | Runtime 8.0.0 + unsupported quality | Succeeded, output 8.0.0 |
+          | Runtime 8.0.4xx | Installation failure |
+
+          Inspect the action-step logs to distinguish action validation from installer errors.
+          "@ | Add-Content $env:GITHUB_STEP_SUMMARY
