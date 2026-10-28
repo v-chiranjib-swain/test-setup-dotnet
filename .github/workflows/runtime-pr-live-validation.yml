@@ -19,7 +19,6 @@ jobs:
       run:
         shell: pwsh
     env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/runtime-pr-dotnet
       DOTNET_MULTILEVEL_LOOKUP: '0'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -31,6 +30,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:DOTNET_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'runtime-pr-dotnet'
+          "DOTNET_INSTALL_DIR=$env:DOTNET_INSTALL_DIR" | Add-Content $env:GITHUB_ENV
           $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
           if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the internal PR head' }
           if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
