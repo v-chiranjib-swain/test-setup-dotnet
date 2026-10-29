@@ -1,0 +1,96 @@
+name: Internal PR 3 - compare SDK and runtime feature-band inputs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: 8.0.4xx as ${{ matrix.input }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        input: [dotnet-version, dotnet-runtime]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+
+    steps:
+      - name: Verify the PR revision and use an empty installation directory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the PR revision' }
+          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+            throw "PR revision changed to $head; review before rerunning"
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP 'feature-band-comparison'
+          if (Test-Path $installDir) { throw "Installation directory is not empty: $installDir" }
+          if (Test-Path (Join-Path $env:GITHUB_WORKSPACE 'global.json')) {
+            throw 'Unexpected global.json could affect the comparison'
+          }
+          "DOTNET_INSTALL_DIR=$installDir" | Add-Content $env:GITHUB_ENV
+          "Testing PR revision: $head" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Install SDK feature band
+        if: matrix.input == 'dotnet-version'
+        id: sdk
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-version: '8.0.4xx'
+          skip-lts-prepass: false
+          cache: false
+
+      - name: Attempt the same feature band as a runtime
+        if: matrix.input == 'dotnet-runtime'
+        id: runtime
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.4xx'
+          skip-lts-prepass: false
+          cache: false
+
+      - name: Verify and report the comparison result
+        if: always()
+        env:
+          TESTED_INPUT: ${{ matrix.input }}
+          SDK_OUTCOME: ${{ steps.sdk.outcome }}
+          SDK_VERSION: ${{ steps.sdk.outputs.dotnet-version }}
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TESTED_INPUT -eq 'dotnet-version') {
+            if ($env:SDK_OUTCOME -ne 'success') { throw 'SDK feature-band installation failed' }
+            if ($env:SDK_VERSION -notmatch '^8\.0\.4\d{2}$') {
+              throw "Installed SDK is outside the 8.0.4xx feature band: $env:SDK_VERSION"
+            }
+            $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+            $sdks = @(& $exe --list-sdks)
+            if ($LASTEXITCODE -ne 0) { throw 'SDK inventory failed' }
+            if ($sdks.Count -ne 1 -or $sdks[0] -notmatch ('^' + [regex]::Escape($env:SDK_VERSION) + ' ')) {
+              throw "SDK inventory does not match the output: $sdks"
+            }
+            $sdks | Write-Output
+            & $exe --list-runtimes
+            if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
+            "dotnet-version: 8.0.4xx succeeded; installed SDK $env:SDK_VERSION." |
+              Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            if ($env:RUNTIME_OUTCOME -ne 'failure') {
+              throw "Runtime feature-band behavior changed: $env:RUNTIME_OUTCOME"
+            }
+            'dotnet-runtime: 8.0.4xx failed as expected; inspect the installer error in the logs.' |
+              Add-Content $env:GITHUB_STEP_SUMMARY
+          }
