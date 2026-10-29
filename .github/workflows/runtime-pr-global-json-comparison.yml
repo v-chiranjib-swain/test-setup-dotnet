@@ -1,0 +1,101 @@
+name: Internal PR 3 - runtime input with and without global.json
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Runtime input with global.json ${{ matrix.global-json }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        global-json: [absent, present]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+
+    steps:
+      - name: Verify the PR revision and prepare the isolated case
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GLOBAL_JSON_CASE: ${{ matrix.global-json }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the PR revision' }
+          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+            throw "PR revision changed to $head; review before rerunning"
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP 'runtime-global-json-dotnet'
+          if (Test-Path $installDir) { throw "Installation directory is not empty: $installDir" }
+          "DOTNET_INSTALL_DIR=$installDir" | Add-Content $env:GITHUB_ENV
+          $globalJson = Join-Path $env:GITHUB_WORKSPACE 'global.json'
+          if (Test-Path $globalJson) { throw 'Unexpected pre-existing global.json' }
+          if ($env:GLOBAL_JSON_CASE -eq 'present') {
+            '{"sdk":{"version":"10.0.100"}}' | Set-Content $globalJson
+            Get-Content $globalJson | Write-Output
+          }
+          "PR revision: $head; root global.json: $env:GLOBAL_JSON_CASE" |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Request only runtime 8 without either SDK input
+        id: install
+        uses: v-mahabaleshwars/setup-dotnet@feature/352-runtime-only-input
+        with:
+          dotnet-runtime: '8.0.x'
+          skip-lts-prepass: true
+          cache: false
+
+      - name: Verify installed SDKs, runtimes, and action output
+        env:
+          GLOBAL_JSON_CASE: ${{ matrix.global-json }}
+          ACTION_VERSION: ${{ steps.install.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $active = (Get-Command dotnet).Source
+          if ([IO.Path]::GetFullPath($active) -ne [IO.Path]::GetFullPath($exe)) {
+            throw "PATH selected $active instead of the isolated installation $exe"
+          }
+          $sdks = @(& $exe --list-sdks)
+          if ($LASTEXITCODE -ne 0) { throw 'SDK inventory failed' }
+          $runtimes = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
+          Write-Output "SDK count: $($sdks.Count)"
+          $sdks + $runtimes | Write-Output
+          foreach ($product in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+            $pattern = '^' + [regex]::Escape($product) + ' 8\.0\.\d+ '
+            if (-not ($runtimes -match $pattern)) { throw "Missing $product 8.0" }
+          }
+          if ($env:GLOBAL_JSON_CASE -eq 'present') {
+            if ($sdks.Count -ne 1 -or $sdks[0] -notmatch '^10\.0\.100 ') {
+              throw "Expected global.json SDK 10.0.100, got: $sdks"
+            }
+            if ($env:ACTION_VERSION -ne '10.0.100') {
+              throw "Expected SDK-version output, got: $env:ACTION_VERSION"
+            }
+            $selectedSdk = & $exe --version
+            if ($LASTEXITCODE -ne 0 -or $selectedSdk -ne '10.0.100') {
+              throw "global.json did not select SDK 10.0.100: $selectedSdk"
+            }
+            "global.json present: SDK 10.0.100 and runtimes 8.0 installed; output $env:ACTION_VERSION." |
+              Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            if ($sdks.Count -ne 0) { throw "Expected no SDK, got: $sdks" }
+            if ($runtimes.Count -ne 2) { throw "Expected only the two runtime 8.0 products: $runtimes" }
+            if ($env:ACTION_VERSION -notmatch '^8\.0\.\d+$') {
+              throw "Expected runtime-version output, got: $env:ACTION_VERSION"
+            }
+            "global.json absent: no SDK installed; runtimes 8.0 installed; output $env:ACTION_VERSION." |
+              Add-Content $env:GITHUB_STEP_SUMMARY
+          }
