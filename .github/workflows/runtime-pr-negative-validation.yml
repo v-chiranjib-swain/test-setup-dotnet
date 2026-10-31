@@ -1,4 +1,4 @@
-name: Internal PR 3 - reproduce runtime input validation gaps
+name: Internal PR 3 - verify runtime input validation fixes
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
           if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the internal PR head' }
-          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+          if ($head -ne 'ac0d2b57a66851dcc4f07c6dde0c99f271348054') {
             throw "PR head changed to $head; review the new revision before testing"
           }
           $installDir = Join-Path $env:RUNNER_TEMP 'runtime-pr-negative-dotnet'
@@ -91,35 +91,27 @@ jobs:
             throw "Expected SDK quality rejection, got $env:SDK_QUALITY"
           }
           if ($env:RUNTIME_QUALITY -ne 'failure') {
-            throw "Expected installer-level runtime quality failure, got $env:RUNTIME_QUALITY"
+            throw "Expected action-level runtime quality rejection, got $env:RUNTIME_QUALITY"
           }
-          if ($env:EXACT_QUALITY -ne 'success' -or $env:EXACT_VERSION -ne '8.0.0') {
-            throw "Exact-version behavior changed: $env:EXACT_QUALITY / $env:EXACT_VERSION"
+          if ($env:EXACT_QUALITY -ne 'failure' -or $env:EXACT_VERSION) {
+            throw "Expected exact-version quality rejection without output: $env:EXACT_QUALITY / $env:EXACT_VERSION"
           }
           if ($env:FEATURE_BAND -ne 'failure') {
-            throw "Expected feature-band installation failure, got $env:FEATURE_BAND"
+            throw "Expected feature-band validation rejection, got $env:FEATURE_BAND"
           }
-          $exe = Join-Path $env:DOTNET_ROOT $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
-          $sdks = @(& $exe --list-sdks)
-          if ($LASTEXITCODE -ne 0 -or $sdks.Count -ne 0) {
-            throw "Expected no SDK installation, got: $sdks"
-          }
-          $runtimes = @(& $exe --list-runtimes)
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime inventory failed' }
-          foreach ($product in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
-            $pattern = '^' + [regex]::Escape($product) + ' 8\.0\.0 '
-            if (-not ($runtimes -match $pattern)) { throw "Missing $product 8.0.0" }
+          if (Test-Path $env:DOTNET_INSTALL_DIR) {
+            throw 'Validation should reject all cases before creating the installation directory'
           }
           @"
-          ## Reproduction results
-          This run reproduces current behavior; a green job does not mean validation is correct.
+          ## Validation fix results
+          All invalid inputs were rejected without creating an installation directory.
 
           | Input | Observed outcome |
           |---|---|
           | SDK 10.0.x + unsupported quality | Rejected |
-          | Runtime 8.0.x + unsupported quality | Installer failure |
-          | Runtime 8.0.0 + unsupported quality | Succeeded, output 8.0.0 |
-          | Runtime 8.0.4xx | Installation failure |
+          | Runtime 8.0.x + unsupported quality | Rejected |
+          | Runtime 8.0.0 + unsupported quality | Rejected, no version output |
+          | Runtime 8.0.4xx | Rejected |
 
-          Inspect the action-step logs to distinguish action validation from installer errors.
+          Verify the action-step logs show input validation errors without installer invocation.
           "@ | Add-Content $env:GITHUB_STEP_SUMMARY

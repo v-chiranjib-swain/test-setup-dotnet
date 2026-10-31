@@ -32,7 +32,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $head = gh api repos/v-mahabaleshwars/setup-dotnet/pulls/3 --jq '.head.sha'
           if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the PR revision' }
-          if ($head -ne '5bef95fb753adb39e865bebe07b2803753cab506') {
+          if ($head -ne 'ac0d2b57a66851dcc4f07c6dde0c99f271348054') {
             throw "PR revision changed to $head; review before rerunning"
           }
           $installDir = Join-Path $env:RUNNER_TEMP 'feature-band-comparison'
@@ -91,6 +91,6 @@ jobs:
             if ($env:RUNTIME_OUTCOME -ne 'failure') {
               throw "Runtime feature-band behavior changed: $env:RUNTIME_OUTCOME"
             }
-            'dotnet-runtime: 8.0.4xx failed as expected; inspect the installer error in the logs.' |
+            'dotnet-runtime: 8.0.4xx rejected as expected; verify the action validation error in the logs.' |
               Add-Content $env:GITHUB_STEP_SUMMARY
           }
