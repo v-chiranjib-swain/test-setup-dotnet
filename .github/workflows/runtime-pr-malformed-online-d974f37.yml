@@ -1,0 +1,92 @@
+name: Internal PR 3 d974f37 - malformed preview configuration online
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Isolate runtime installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/preview-malformed-online"
+          test ! -e "$install_dir"
+          test ! -e "$GITHUB_WORKSPACE/global.json"
+          printf 'DOTNET_INSTALL_DIR=%s\n' "$install_dir" >> "$GITHUB_ENV"
+
+      - name: Install official preview runtime pair
+        uses: v-mahabaleshwars/setup-dotnet@d974f37a99fe6cc0eb3d25db4e1d871b11b8b166
+        with:
+          dotnet-runtime: '8.0.0-rc.2.23479.6'
+          check-latest: true
+
+      - name: Verify genuine pair and online connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DOTNET_INSTALL_DIR/dotnet" --info
+          runtimes="$("$DOTNET_INSTALL_DIR/dotnet" --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          grep -F 'Microsoft.NETCore.App 8.0.0-rc.2.23479.6 ' <<< "$runtimes"
+          grep -F 'Microsoft.AspNetCore.App 8.0.0-rc.2.23480.2 ' <<< "$runtimes"
+          config="$DOTNET_INSTALL_DIR/shared/Microsoft.AspNetCore.App/8.0.0-rc.2.23480.2/Microsoft.AspNetCore.App.runtimeconfig.json"
+          jq -e '.runtimeOptions.framework.name == "Microsoft.NETCore.App" and .runtimeOptions.framework.version == "8.0.0-rc.2.23479.6"' "$config"
+          curl --fail --silent --show-error --location --head --max-time 30 --output /dev/null \
+            https://aka.ms/dotnet/8.0/preview/Runtime-linux-x64.tar.gz
+
+      - name: Corrupt the isolated preview runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$DOTNET_INSTALL_DIR/shared/Microsoft.AspNetCore.App/8.0.0-rc.2.23480.2/Microsoft.AspNetCore.App.runtimeconfig.json"
+          printf '{ invalid json\n' > "$config"
+          if jq -e . "$config" >/dev/null 2>&1; then
+            echo 'Expected malformed JSON' >&2
+            exit 1
+          fi
+          echo 'Verified runtime configuration is malformed.'
+
+      - name: Request preview channel online with check-latest false
+        id: retry
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: v-mahabaleshwars/setup-dotnet@d974f37a99fe6cc0eb3d25db4e1d871b11b8b166
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: preview
+          check-latest: false
+
+      - name: Report action outcome and inspect file after fallback
+        if: always()
+        env:
+          OUTCOME: ${{ steps.retry.outcome }}
+          VERSION: ${{ steps.retry.outputs.dotnet-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != 'success' ] && [ "$OUTCOME" != 'failure' ]; then
+            echo "Action did not run: $OUTCOME" >&2
+            exit 1
+          fi
+          config="$DOTNET_INSTALL_DIR/shared/Microsoft.AspNetCore.App/8.0.0-rc.2.23480.2/Microsoft.AspNetCore.App.runtimeconfig.json"
+          if [ ! -f "$config" ]; then
+            result='missing'
+          elif jq -e '.runtimeOptions.framework.name == "Microsoft.NETCore.App" and .runtimeOptions.framework.version == "8.0.0-rc.2.23479.6"' "$config" >/dev/null 2>&1; then
+            result='repaired to the original pairing'
+          elif jq -e . "$config" >/dev/null 2>&1; then
+            result='valid JSON but not the original pairing'
+          else
+            result='still malformed'
+          fi
+          printf 'Action outcome: %s; output: %s; runtime configuration after fallback: %s\n' "$OUTCOME" "$VERSION" "$result" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'Check the action log to confirm whether online fallback and both installer scripts ran.'
