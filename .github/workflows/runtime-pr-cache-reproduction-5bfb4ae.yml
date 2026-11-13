@@ -74,6 +74,7 @@ jobs:
           $output | ForEach-Object { "$_" | Write-Host }
           if ($code -eq 0) { throw 'Expected damaged dotnet host to fail' }
           "Damaged host exit code before action: $code" | Write-Host
+          $global:LASTEXITCODE = 0
       - name: Reproduce reuse of damaged installation
         id: damaged
         continue-on-error: true
@@ -98,6 +99,7 @@ jobs:
           if ($code -eq 0) { throw 'Host was usable after action; issue not reproduced' }
           "Action returned success and version $env:VERSION, but dotnet --info failed with exit code $code." |
             Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $global:LASTEXITCODE = 0
 
   preview-pair:
     name: Preview pair with different build numbers (${{ matrix.os }})
