@@ -1,0 +1,127 @@
+name: Internal PR 3 d974f37 - invalid preview pairing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invalid-pair:
+    name: Preview pairing ${{ matrix.case }} with HTTP blocked
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [missing, malformed, mismatched-version, mismatched-name]
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Isolate runtime installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/preview-invalid-pair"
+          test ! -e "$install_dir"
+          test ! -e "$GITHUB_WORKSPACE/global.json"
+          printf 'DOTNET_INSTALL_DIR=%s\n' "$install_dir" >> "$GITHUB_ENV"
+
+      - name: Install official preview runtime pair
+        uses: v-mahabaleshwars/setup-dotnet@d974f37a99fe6cc0eb3d25db4e1d871b11b8b166
+        with:
+          dotnet-runtime: '8.0.0-rc.2.23479.6'
+          check-latest: true
+
+      - name: Verify genuine pair and baseline network access
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DOTNET_INSTALL_DIR/dotnet" --info
+          runtimes="$("$DOTNET_INSTALL_DIR/dotnet" --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          grep -F 'Microsoft.NETCore.App 8.0.0-rc.2.23479.6 ' <<< "$runtimes"
+          grep -F 'Microsoft.AspNetCore.App 8.0.0-rc.2.23480.2 ' <<< "$runtimes"
+          config="$DOTNET_INSTALL_DIR/shared/Microsoft.AspNetCore.App/8.0.0-rc.2.23480.2/Microsoft.AspNetCore.App.runtimeconfig.json"
+          test -f "$config"
+          jq -e '.runtimeOptions.framework.name == "Microsoft.NETCore.App" and .runtimeOptions.framework.version == "8.0.0-rc.2.23479.6"' "$config"
+          curl --fail --silent --show-error --location --head --max-time 30 --output /dev/null \
+            https://aka.ms/dotnet/8.0/preview/Runtime-linux-x64.tar.gz
+
+      - name: Block HTTP via unreachable proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variable in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+            printf '%s=http://127.0.0.1:9\n' "$variable" >> "$GITHUB_ENV"
+          done
+          printf 'NO_PROXY=\nno_proxy=\n' >> "$GITHUB_ENV"
+
+      - name: Verify network restriction
+        shell: bash
+        run: |
+          set -euo pipefail
+          if curl --silent --show-error --location --connect-timeout 5 --max-time 10 --output /dev/null \
+            https://aka.ms/dotnet/8.0/preview/Runtime-linux-x64.tar.gz; then
+            echo 'Expected proxy connection failure' >&2
+            exit 1
+          else
+            code=$?
+            test "$code" -eq 7
+            echo "Verified proxy connection failure: curl $code"
+          fi
+
+      - name: Control - reuse the verified preview pair
+        id: valid
+        uses: v-mahabaleshwars/setup-dotnet@d974f37a99fe6cc0eb3d25db4e1d871b11b8b166
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: preview
+          check-latest: false
+
+      - name: Create the invalid pairing case
+        env:
+          CASE: ${{ matrix.case }}
+          VALID_VERSION: ${{ steps.valid.outputs.dotnet-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VALID_VERSION" = '8.0.0-rc.2.23479.6'
+          config="$DOTNET_INSTALL_DIR/shared/Microsoft.AspNetCore.App/8.0.0-rc.2.23480.2/Microsoft.AspNetCore.App.runtimeconfig.json"
+          test -f "$config"
+          case "$CASE" in
+            missing) rm -- "$config"; test ! -e "$config" ;;
+            malformed) printf '{ invalid json\n' > "$config" ;;
+            mismatched-version) jq '.runtimeOptions.framework.version = "8.0.0-rc.2.12345.6"' "$config" > "$config.tmp"; mv -- "$config.tmp" "$config" ;;
+            mismatched-name) jq '.runtimeOptions.framework.name = "Other.Framework"' "$config" > "$config.tmp"; mv -- "$config.tmp" "$config" ;;
+            *) echo "Unexpected case $CASE" >&2; exit 1 ;;
+          esac
+          echo "Prepared $CASE preview pairing data in runner temp."
+
+      - name: Request preview channel with invalid pairing
+        id: invalid
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: v-mahabaleshwars/setup-dotnet@d974f37a99fe6cc0eb3d25db4e1d871b11b8b166
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: preview
+          check-latest: false
+
+      - name: Assert invalid pairing does not reuse runtime
+        if: always()
+        env:
+          CASE: ${{ matrix.case }}
+          VALID_OUTCOME: ${{ steps.valid.outcome }}
+          OUTCOME: ${{ steps.invalid.outcome }}
+          VERSION: ${{ steps.invalid.outputs.dotnet-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$VALID_OUTCOME" != 'success' ] || [ "$OUTCOME" != 'failure' ] || [ -n "$VERSION" ]; then
+            echo "Unexpected outcomes for $CASE: valid=$VALID_OUTCOME invalid=$OUTCOME output=$VERSION" >&2
+            exit 1
+          fi
+          echo "For $CASE, valid pairing reused locally and invalid pairing failed without version output with HTTP blocked. Check action log for fallback." | tee -a "$GITHUB_STEP_SUMMARY"
