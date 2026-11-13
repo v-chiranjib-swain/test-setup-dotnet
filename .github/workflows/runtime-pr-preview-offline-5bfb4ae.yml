@@ -1,0 +1,131 @@
+name: Internal PR 3 - preview runtime network isolation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Compare stable and preview cache reuse with network blocked
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Isolate installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/runtime-preview-offline"
+          test ! -e "$install_dir"
+          test ! -e "$GITHUB_WORKSPACE/global.json"
+          printf 'DOTNET_INSTALL_DIR=%s\n' "$install_dir" >> "$GITHUB_ENV"
+
+      - name: Install stable runtime pair
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.11'
+          check-latest: true
+
+      - name: Install official preview runtime pair
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.0-rc.2.23479.6'
+          check-latest: true
+
+      - name: Verify installed runtime pairs and baseline connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DOTNET_INSTALL_DIR/dotnet" --info
+          runtimes="$("$DOTNET_INSTALL_DIR/dotnet" --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          for pair in \
+            'Microsoft.NETCore.App 8.0.11' \
+            'Microsoft.AspNetCore.App 8.0.11' \
+            'Microsoft.NETCore.App 8.0.0-rc.2.23479.6' \
+            'Microsoft.AspNetCore.App 8.0.0-rc.2.23480.2'
+          do
+            grep -F "$pair " <<< "$runtimes"
+          done
+          curl --fail --silent --show-error --location --head --max-time 30 --output /dev/null \
+            https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json
+          curl --fail --silent --show-error --location --head --max-time 30 --output /dev/null \
+            https://aka.ms/dotnet/8.0/preview/Runtime-linux-x64.tar.gz
+
+      - name: Restrict HTTP access for subsequent steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variable in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+            printf '%s=http://127.0.0.1:9\n' "$variable" >> "$GITHUB_ENV"
+          done
+          printf 'NO_PROXY=\nno_proxy=\n' >> "$GITHUB_ENV"
+
+      - name: Verify endpoints are blocked by proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in \
+            https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json \
+            https://aka.ms/dotnet/8.0/preview/Runtime-linux-x64.tar.gz
+          do
+            if curl --silent --show-error --location --connect-timeout 5 --max-time 10 --output /dev/null "$url"; then
+              echo "Expected proxy to block $url" >&2
+              exit 1
+            else
+              code=$?
+              if [ "$code" -ne 7 ]; then
+                echo "Expected proxy connection failure (curl 7), got $code" >&2
+                exit 1
+              fi
+              echo "Verified proxy connection failure for $url"
+            fi
+          done
+
+      - name: Control - stable channel should reuse local pair
+        id: stable
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: ga
+          check-latest: false
+
+      - name: Verify stable control output
+        env:
+          VERSION: ${{ steps.stable.outputs.dotnet-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VERSION" = '8.0.11'
+          echo "Stable channel reused $VERSION while proxy blocked HTTP access."
+
+      - name: Request preview channel with network blocked
+        id: preview
+        continue-on-error: true
+        timeout-minutes: 8
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: preview
+          check-latest: false
+
+      - name: Assert preview failure
+        if: always()
+        env:
+          STABLE_OUTCOME: ${{ steps.stable.outcome }}
+          PREVIEW_OUTCOME: ${{ steps.preview.outcome }}
+          VERSION: ${{ steps.preview.outputs.dotnet-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$STABLE_OUTCOME" = 'success'
+          if [ "$PREVIEW_OUTCOME" != 'failure' ] || [ -n "$VERSION" ]; then
+            echo "Expected preview failure without output, got $PREVIEW_OUTCOME / $VERSION" >&2
+            exit 1
+          fi
+          echo 'Stable cache reuse succeeded; preview channel failed with outbound HTTP blocked by proxy. Verify action logs for the fallback and network error.' | tee -a "$GITHUB_STEP_SUMMARY"
