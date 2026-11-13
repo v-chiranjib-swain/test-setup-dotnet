@@ -1,0 +1,177 @@
+name: Internal PR 3 - runtime cache live reproductions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  damaged-runtime:
+    name: Damaged host with runtime markers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Isolate installation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'runtime-cache-damaged'
+          if (Test-Path $dir) { throw "Expected an empty directory: $dir" }
+          if (Test-Path (Join-Path $env:GITHUB_WORKSPACE 'global.json')) {
+            throw 'Unexpected global.json'
+          }
+          "DOTNET_INSTALL_DIR=$dir" | Add-Content $env:GITHUB_ENV
+      - name: Install a real runtime pair
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.11'
+          check-latest: true
+      - name: Verify the installed host and framework markers
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          & $exe --info
+          if ($LASTEXITCODE -ne 0) { throw 'Installed host did not run' }
+          $frameworks = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list runtimes' }
+          foreach ($framework in @('Microsoft.NETCore.App', 'Microsoft.AspNetCore.App')) {
+            if (-not ($frameworks -match "^$([regex]::Escape($framework)) 8\.0\.11 ")) {
+              throw "Missing runtime $framework 8.0.11"
+            }
+            $marker = Join-Path $env:DOTNET_INSTALL_DIR "shared/$framework/8.0.11/$framework.deps.json"
+            if (-not (Test-Path -PathType Leaf $marker)) { throw "Missing marker $marker" }
+          }
+      - name: Control - reuse healthy pair
+        id: healthy
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.x'
+          check-latest: false
+      - name: Damage only the isolated hostfxr library
+        env:
+          HEALTHY_VERSION: ${{ steps.healthy.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:HEALTHY_VERSION -ne '8.0.11') { throw "Unexpected control output: $env:HEALTHY_VERSION" }
+          $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $name = if ($IsWindows) { 'hostfxr.dll' } elseif ($IsMacOS) { 'libhostfxr.dylib' } else { 'libhostfxr.so' }
+          $library = Join-Path $env:DOTNET_INSTALL_DIR "host/fxr/8.0.11/$name"
+          if (-not (Test-Path -PathType Leaf $library)) { throw "Missing hostfxr library $library" }
+          Remove-Item -LiteralPath $library
+          $output = & $exe --info 2>&1
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { "$_" | Write-Host }
+          if ($code -eq 0) { throw 'Expected damaged dotnet host to fail' }
+          "Damaged host exit code before action: $code" | Write-Host
+      - name: Reproduce reuse of damaged installation
+        id: damaged
+        continue-on-error: true
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.x'
+          check-latest: false
+      - name: Verify action result and host usability
+        if: always()
+        env:
+          OUTCOME: ${{ steps.damaged.outcome }}
+          VERSION: ${{ steps.damaged.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:OUTCOME -ne 'success' -or $env:VERSION -ne '8.0.11') {
+            throw "Reproduction not confirmed: action outcome=$env:OUTCOME output=$env:VERSION"
+          }
+          $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          $output = & $exe --info 2>&1
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { "$_" | Write-Host }
+          if ($code -eq 0) { throw 'Host was usable after action; issue not reproduced' }
+          "Action returned success and version $env:VERSION, but dotnet --info failed with exit code $code." |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+  preview-pair:
+    name: Preview pair with different build numbers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Isolate installation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'runtime-cache-preview'
+          if (Test-Path $dir) { throw "Expected an empty directory: $dir" }
+          if (Test-Path (Join-Path $env:GITHUB_WORKSPACE 'global.json')) {
+            throw 'Unexpected global.json'
+          }
+          "DOTNET_INSTALL_DIR=$dir" | Add-Content $env:GITHUB_ENV
+      - name: Install the official preview pair
+        id: install
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.0-rc.2.23479.6'
+          check-latest: true
+      - name: Verify the runnable host and both preview runtimes
+        env:
+          VERSION: ${{ steps.install.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERSION -ne '8.0.0-rc.2.23479.6') { throw "Unexpected version: $env:VERSION" }
+          $exe = Join-Path $env:DOTNET_INSTALL_DIR $(if ($IsWindows) { 'dotnet.exe' } else { 'dotnet' })
+          & $exe --info
+          if ($LASTEXITCODE -ne 0) { throw 'Preview host did not run' }
+          $frameworks = @(& $exe --list-runtimes)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list preview runtimes' }
+          $frameworks | Write-Host
+          $expected = @{
+            'Microsoft.NETCore.App' = '8.0.0-rc.2.23479.6'
+            'Microsoft.AspNetCore.App' = '8.0.0-rc.2.23480.2'
+          }
+          foreach ($framework in $expected.Keys) {
+            $version = $expected[$framework]
+            if (-not ($frameworks -match "^$([regex]::Escape($framework)) $([regex]::Escape($version)) ")) {
+              throw "Missing $framework $version"
+            }
+            $marker = Join-Path $env:DOTNET_INSTALL_DIR "shared/$framework/$version/$framework.deps.json"
+            if (-not (Test-Path -PathType Leaf $marker)) { throw "Missing marker $marker" }
+          }
+      - name: Request preview channel with check-latest false
+        id: channel
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: v-mahabaleshwars/setup-dotnet@5bfb4ae510509d00f3e2ff4493d9cb7aa9d82d49
+        with:
+          dotnet-runtime: '8.0.x'
+          dotnet-quality: preview
+          check-latest: false
+      - name: Report channel outcome
+        if: always()
+        env:
+          OUTCOME: ${{ steps.channel.outcome }}
+          VERSION: ${{ steps.channel.outputs.dotnet-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:OUTCOME -notin @('success', 'failure')) {
+            throw "Channel step did not run: $env:OUTCOME"
+          }
+          "Channel action outcome: $env:OUTCOME; output: $env:VERSION. Inspect the action log to determine whether it reused the pair or fell back online." |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
